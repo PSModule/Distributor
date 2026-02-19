@@ -31,6 +31,10 @@ Repositories subscribe to file sets using **two custom properties** defined at t
 
 **Available `SubscribeTo` values** (must match folder names exactly):
 - `Custom Instructions` - Copilot instructions for the repository
+- `Prompts` - GitHub Copilot prompt files
+- `Hooks` - Git hooks for the repository
+- `CODEOWNERS` - GitHub CODEOWNERS file
+- `dependabot.yml` - Dependabot configuration
 - `Linter Settings` - Linter configuration files
 - `PSModule Settings` - PSModule-specific configuration (Module type only)
 - `gitattributes` - Git attributes file
