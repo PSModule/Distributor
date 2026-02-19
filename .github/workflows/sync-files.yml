@@ -1,0 +1,24 @@
+name: Sync Managed Files
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # Daily at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-files:
+    name: Sync files to subscribing repositories
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync managed files
+        uses: PSModule/GitHub-Script@main
+        with:
+          Script: ./scripts/Sync-Files.ps1
+          ClientID: ${{ secrets.CUSTO_BOT_CLIENT_ID }}
+          PrivateKey: ${{ secrets.CUSTO_BOT_PRIVATE_KEY }}
