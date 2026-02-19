@@ -27,7 +27,18 @@ Repositories subscribe to file sets using **two custom properties** defined at t
 | Property | Type | Description |
 |----------|------|-------------|
 | `Type` | Single-select | Determines which type folder to use (Module, Action, Template, Workflow, Docs, Other) |
-| `SubscribeTo` | Multi-select | Determines which file sets to receive (Custom Instructions, Linter Settings, License, etc.) |
+| `SubscribeTo` | Multi-select | Determines which file sets to receive |
+
+**Available `SubscribeTo` values** (must match folder names exactly):
+- `Custom Instructions` - Copilot instructions for the repository
+- `Linter Settings` - Linter configuration files
+- `PSModule Settings` - PSModule-specific configuration (Module type only)
+- `gitattributes` - Git attributes file
+- `gitignore` - Git ignore patterns
+- `License` - License file
+- Additional values can be added as new folders are created
+
+> **Important**: The `SubscribeTo` values are organization-wide, but not all values are available for all types. For example, `PSModule Settings` only exists under the `Module` type. If a repository subscribes to a selection that doesn't exist for its type, the workflow will log a warning and skip that selection.
 
 Repositories self-manage their subscriptions by setting these custom property values.
 
@@ -64,13 +75,13 @@ Distributor/
 │   │   ├── Custom Instructions/    # Copilot instructions
 │   │   ├── Linter Settings/        # Linter configurations
 │   │   ├── PSModule Settings/      # PSModule-specific configs
-│   │   ├── .gitattributes/         # Git attributes
-│   │   ├── .gitignore/             # Git ignore patterns
+│   │   ├── gitattributes/          # Git attributes (.gitattributes file)
+│   │   ├── gitignore/              # Git ignore patterns (.gitignore file)
 │   │   └── License/                # License file
 │   ├── Action/                     # Files for GitHub Actions
 │   │   ├── Custom Instructions/
-│   │   ├── .gitattributes/
-│   │   ├── .gitignore/
+│   │   ├── gitattributes/
+│   │   ├── gitignore/
 │   │   └── License/
 │   ├── Template/                   # Files for repository templates
 │   └── Workflow/                   # Files for reusable workflows
@@ -80,6 +91,8 @@ Distributor/
     └── workflows/
         └── sync-files.yml         # Scheduled workflow
 ```
+
+> **Note**: Folder names must match the custom property values exactly. For git-specific files like `.gitattributes` and `.gitignore`, the folders are named without the leading dot (`gitattributes`, `gitignore`) to avoid conflicts with Git's special handling of these filenames.
 
 ## Adding New File Sets
 
