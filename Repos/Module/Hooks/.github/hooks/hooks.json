@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "./.github/hooks/scripts/session-start.sh",
+        "powershell": "./.github/hooks/scripts/session-start.ps1",
+        "timeoutSec": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "./.github/hooks/scripts/session-end.sh",
+        "powershell": "./.github/hooks/scripts/session-end.ps1",
+        "timeoutSec": 30
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "./.github/hooks/scripts/log-prompt.sh",
+        "powershell": "./.github/hooks/scripts/log-prompt.ps1",
+        "timeoutSec": 10,
+        "env": {
+          "LOG_LEVEL": "INFO"
+        }
+      }
+    ]
+  }
+}
