@@ -1,0 +1,13 @@
+# Default owners for everything in the repository
+* @PSModule/maintainers
+
+# GitHub-specific files and workflows
+/.github/ @PSModule/infrastructure
+/.github/workflows/ @PSModule/infrastructure
+
+# Documentation
+/docs/ @PSModule/documentation
+*.md @PSModule/documentation
+
+# Source code (can be customized per repository)
+/src/ @PSModule/maintainers

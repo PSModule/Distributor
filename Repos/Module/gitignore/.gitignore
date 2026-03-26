@@ -1,0 +1,9 @@
+### PowerShell ###
+# Exclude module build artifacts
+/Output/
+/BuildOutput/
+*.nupkg
+
+# Exclude test results
+TestResults.xml
+coverage.xml
