@@ -54,6 +54,7 @@ function Get-FileSets {
     }
 
     $typeDirs = Get-ChildItem -Path $ReposPath -Directory
+    $fileSetTable = @()
 
     foreach ($typeDir in $typeDirs) {
         $typeName = $typeDir.Name
@@ -75,9 +76,15 @@ function Get-FileSets {
             }
 
             $fileSets[$typeName][$selectionName] = $fileList
-            Write-Host "  $typeName/$selectionName ($($fileList.Count) files)"
+            $fileSetTable += [PSCustomObject]@{
+                Type    = $typeName
+                FileSet = $selectionName
+                Files   = $fileList.Count
+            }
         }
     }
+
+    $fileSetTable | Format-Table -AutoSize | Out-String | Write-Host
 
     return $fileSets
 }
@@ -110,7 +117,7 @@ function Get-SubscribingRepositories {
         $type = ($customProps | Where-Object Name -EQ 'Type').Value
         $subscribeTo = ($customProps | Where-Object Name -EQ 'SubscribeTo').Value
 
-        if ([string]::IsNullOrWhiteSpace($type) -or -not $subscribeTo) {
+        if (-not $type -or -not $subscribeTo) {
             continue
         }
 
@@ -130,9 +137,16 @@ function Get-SubscribingRepositories {
             SubscribeTo   = $subscribeTo
             DefaultBranch = $repo.DefaultBranch
         }
-
-        Write-Host "  $($repo.FullName) [Type=$type] -> $($subscribeTo -join ', ')"
     }
+
+    $subscribingRepos | ForEach-Object {
+        [PSCustomObject]@{
+            Owner       = $_.Owner
+            Repo        = $_.Name
+            Type        = $_.Type
+            SubscribeTo = $_.SubscribeTo -join ', '
+        }
+    } | Format-Table -AutoSize | Out-String | Write-Host
 
     return $subscribingRepos
 }
@@ -316,6 +330,7 @@ function Sync-RepositoryFiles {
 try {
     LogGroup '🔑 Authenticate' {
         $context = Connect-GitHubApp -PassThru
+        $context | Format-List | Out-String | Write-Host
     }
 
     LogGroup '📂 Discover file sets' {
