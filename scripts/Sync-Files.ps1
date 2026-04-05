@@ -84,7 +84,7 @@ function Get-FileSets {
         }
     }
 
-    $fileSetTable | Format-Table -AutoSize | Out-String | Write-Host
+    $fileSetTable | Format-Table -AutoSize | Out-String
 
     return $fileSets
 }
@@ -146,7 +146,7 @@ function Get-SubscribingRepositories {
             Type        = $_.Type
             SubscribeTo = $_.SubscribeTo -join ', '
         }
-    } | Format-Table -AutoSize | Out-String | Write-Host
+    } | Format-Table -AutoSize | Out-String
 
     return $subscribingRepos
 }
@@ -330,7 +330,7 @@ function Sync-RepositoryFiles {
 try {
     LogGroup '🔑 Authenticate' {
         $context = Connect-GitHubApp -PassThru
-        $context | Format-List | Out-String | Write-Host
+        $context | Format-List | Out-String
     }
 
     LogGroup '📂 Discover file sets' {
