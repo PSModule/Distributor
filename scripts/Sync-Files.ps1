@@ -23,47 +23,18 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$InformationPreference = 'Continue'
 
 # Track summary information
 $script:Summary = @{
-    TotalReposProcessed      = 0
-    PRsCreated               = 0
-    PRsUpdated               = 0
-    ReposAlreadyInSync       = 0
-    ReposSkipped             = 0
-    Errors                   = @()
+    TotalReposProcessed = 0
+    PRsCreated          = 0
+    PRsUpdated          = 0
+    ReposAlreadyInSync  = 0
+    ReposSkipped        = 0
+    Errors              = @()
 }
 
 #region Helper Functions
-
-function Write-SyncLog {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$Message,
-
-        [Parameter()]
-        [ValidateSet('Info', 'Warning', 'Error', 'Success')]
-        [string]$Level = 'Info'
-    )
-
-    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $prefix = switch ($Level) {
-        'Info' { '💡' }
-        'Warning' { '⚠️ ' }
-        'Error' { '❌' }
-        'Success' { '✅' }
-    }
-
-    $fullMessage = "[$timestamp] $prefix $Message"
-
-    switch ($Level) {
-        'Error' { Write-Error $fullMessage -ErrorAction Continue }
-        'Warning' { Write-Warning $fullMessage }
-        default { Write-Information $fullMessage }
-    }
-}
 
 function Get-FileSets {
     <#
@@ -79,29 +50,23 @@ function Get-FileSets {
     $fileSets = @{}
 
     if (-not (Test-Path $ReposPath)) {
-        Write-SyncLog "Repos directory not found at: $ReposPath" -Level Error
-        return $fileSets
+        throw "Repos directory not found at: $ReposPath"
     }
 
-    # Get all type directories (first level)
     $typeDirs = Get-ChildItem -Path $ReposPath -Directory
 
     foreach ($typeDir in $typeDirs) {
         $typeName = $typeDir.Name
         $fileSets[$typeName] = @{}
 
-        # Get all selection directories (second level)
         $selectionDirs = Get-ChildItem -Path $typeDir.FullName -Directory
 
         foreach ($selectionDir in $selectionDirs) {
             $selectionName = $selectionDir.Name
-
-            # Get all files in this selection directory recursively
             $files = Get-ChildItem -Path $selectionDir.FullName -File -Recurse
 
             $fileList = @()
             foreach ($file in $files) {
-                # Compute relative path from selection directory root
                 $relativePath = $file.FullName.Substring($selectionDir.FullName.Length + 1)
                 $fileList += @{
                     SourcePath   = $file.FullName
@@ -110,7 +75,7 @@ function Get-FileSets {
             }
 
             $fileSets[$typeName][$selectionName] = $fileList
-            Write-SyncLog "Discovered file set: $typeName/$selectionName ($($fileList.Count) files)" -Level Info
+            Write-Host "  $typeName/$selectionName ($($fileList.Count) files)"
         }
     }
 
@@ -131,57 +96,45 @@ function Get-SubscribingRepositories {
         [object]$Context
     )
 
-    Write-SyncLog "Querying repositories in organization: $Owner" -Level Info
+    $repos = Get-GitHubRepository -Owner $Owner -Context $Context
 
-    try {
-        $repos = Get-GitHubRepository -Owner $Owner -Context $Context
-        Write-SyncLog "Found $($repos.Count) repositories in organization" -Level Info
+    $subscribingRepos = @()
 
-        $subscribingRepos = @()
+    foreach ($repo in $repos) {
+        $customProps = $repo.CustomProperties
 
-        foreach ($repo in $repos) {
-            $customProps = $repo.CustomProperties
-
-            if (-not $customProps) {
-                continue
-            }
-
-            $type = ($customProps | Where-Object Name -EQ 'Type').Value
-            $subscribeTo = ($customProps | Where-Object Name -EQ 'SubscribeTo').Value
-
-            # Both Type and SubscribeTo must be set
-            if ([string]::IsNullOrWhiteSpace($type) -or -not $subscribeTo) {
-                continue
-            }
-
-            # SubscribeTo might be a single value or array
-            if ($subscribeTo -is [string]) {
-                $subscribeTo = @($subscribeTo)
-            }
-
-            if ($subscribeTo.Count -eq 0) {
-                continue
-            }
-
-            $subscribingRepos += @{
-                Name         = $repo.Name
-                Owner        = $repo.Owner.Login
-                FullName     = $repo.FullName
-                Type         = $type
-                SubscribeTo  = $subscribeTo
-                DefaultBranch = $repo.DefaultBranch
-            }
-
-            Write-SyncLog "Repository '$($repo.FullName)' subscribes to: Type=$type, SubscribeTo=$($subscribeTo -join ', ')" -Level Info
+        if (-not $customProps) {
+            continue
         }
 
-        Write-SyncLog "Found $($subscribingRepos.Count) repositories with subscriptions" -Level Success
+        $type = ($customProps | Where-Object Name -EQ 'Type').Value
+        $subscribeTo = ($customProps | Where-Object Name -EQ 'SubscribeTo').Value
 
-        return $subscribingRepos
-    } catch {
-        Write-SyncLog "Failed to query repositories: $_" -Level Error
-        throw
+        if ([string]::IsNullOrWhiteSpace($type) -or -not $subscribeTo) {
+            continue
+        }
+
+        if ($subscribeTo -is [string]) {
+            $subscribeTo = @($subscribeTo)
+        }
+
+        if ($subscribeTo.Count -eq 0) {
+            continue
+        }
+
+        $subscribingRepos += @{
+            Name          = $repo.Name
+            Owner         = $repo.Owner.Login
+            FullName      = $repo.FullName
+            Type          = $type
+            SubscribeTo   = $subscribeTo
+            DefaultBranch = $repo.DefaultBranch
+        }
+
+        Write-Host "  $($repo.FullName) [Type=$type] -> $($subscribeTo -join ', ')"
     }
+
+    return $subscribingRepos
 }
 
 function Sync-RepositoryFiles {
@@ -189,6 +142,10 @@ function Sync-RepositoryFiles {
     .SYNOPSIS
         Syncs files to a single repository.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingWriteHost', '', Scope = 'Function',
+        Justification = 'Intended for logging in GitHub Actions runners.'
+    )]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -225,177 +182,129 @@ function Sync-RepositoryFiles {
     $type = $Repository.Type
     $subscribeTo = $Repository.SubscribeTo
 
-    Write-SyncLog "Processing repository: $repoFullName" -Level Info
-
     $script:Summary.TotalReposProcessed++
 
-    # Check if type folder exists
+    # Resolve files to sync
     if (-not $FileSets.ContainsKey($type)) {
-        Write-SyncLog "Type folder '$type' not found for repository $repoFullName - skipping" -Level Warning
+        Write-Host "⚠️  $repoFullName - Type folder '$type' not found, skipping"
         $script:Summary.ReposSkipped++
         return
     }
 
-    # Collect all files to sync
     $filesToSync = @()
     foreach ($selection in $subscribeTo) {
         if (-not $FileSets[$type].ContainsKey($selection)) {
-            Write-SyncLog "Selection '$selection' not found under type '$type' for repository $repoFullName - skipping this selection" -Level Warning
+            Write-Host "⚠️  $repoFullName - Selection '$selection' not found under '$type'"
             continue
         }
-
-        $files = $FileSets[$type][$selection]
-        $filesToSync += $files
-        Write-SyncLog "Added $($files.Count) files from $type/$selection" -Level Info
+        $filesToSync += $FileSets[$type][$selection]
     }
 
     if ($filesToSync.Count -eq 0) {
-        Write-SyncLog "No files to sync for repository $repoFullName - skipping" -Level Warning
+        Write-Host "⚠️  $repoFullName - No matching files, skipping"
         $script:Summary.ReposSkipped++
         return
     }
 
-    Write-SyncLog "Total files to sync: $($filesToSync.Count)" -Level Info
+    # All work inside a log group
+    LogGroup "📦 $repoFullName" {
+        $clonePath = Join-Path $TempPath "clone-$repoName-$(Get-Random)"
+        New-Item -Path $clonePath -ItemType Directory -Force | Out-Null
 
-    # Create temporary directory for clone
-    $clonePath = Join-Path $TempPath "clone-$repoName-$(Get-Random)"
-    New-Item -Path $clonePath -ItemType Directory -Force | Out-Null
-
-    try {
-        # Clone repository (shallow)
-        Write-SyncLog "Cloning repository: $repoFullName" -Level Info
-        $cloneUrl = "https://github.com/$repoFullName.git"
-
-        $gitCloneResult = git clone --depth 1 $cloneUrl $clonePath 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Git clone failed: $gitCloneResult"
-        }
-
-        # Configure git identity and authentication
-        Push-Location $clonePath
         try {
-            Set-GitHubGitConfig -Context $Context
-            Write-SyncLog "Git credentials configured for $repoFullName" -Level Info
-
-            # Check if branch already exists
-            $branchExists = $false
-            $remoteBranches = git branch -r 2>&1
-            if ($remoteBranches -match "origin/$BranchName") {
-                $branchExists = $true
-                Write-SyncLog "Branch '$BranchName' already exists - will update it" -Level Info
+            # Clone
+            $cloneUrl = "https://github.com/$repoFullName.git"
+            $gitCloneResult = git clone --depth 1 $cloneUrl $clonePath 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Git clone failed: $gitCloneResult"
             }
 
-            # Create or checkout branch
-            if ($branchExists) {
-                git fetch origin $BranchName 2>&1 | Out-Null
-                git checkout $BranchName 2>&1 | Out-Null
-            } else {
-                git checkout -b $BranchName 2>&1 | Out-Null
-            }
+            Push-Location $clonePath
+            try {
+                Set-GitHubGitConfig -Context $Context
 
-            # Copy files
-            Write-SyncLog "Copying files to repository..." -Level Info
-            foreach ($fileInfo in $filesToSync) {
-                $targetPath = Join-Path $clonePath $fileInfo.RelativePath
-                $targetDir = Split-Path $targetPath -Parent
-
-                # Create directory if it doesn't exist
-                if (-not (Test-Path $targetDir)) {
-                    New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
+                # Branch setup
+                $remoteBranches = git branch -r 2>&1
+                if ($remoteBranches -match "origin/$BranchName") {
+                    git fetch origin $BranchName 2>&1 | Out-Null
+                    git checkout $BranchName 2>&1 | Out-Null
+                } else {
+                    git checkout -b $BranchName 2>&1 | Out-Null
                 }
 
-                # Copy file
-                Copy-Item -Path $fileInfo.SourcePath -Destination $targetPath -Force
-            }
+                # Copy files
+                foreach ($selection in $subscribeTo) {
+                    if (-not $FileSets[$type].ContainsKey($selection)) { continue }
+                    Write-Host "  + $type/$selection ($($FileSets[$type][$selection].Count) files)"
+                }
 
-            # Check for changes
-            $status = git status --porcelain 2>&1
-            if ([string]::IsNullOrWhiteSpace($status)) {
-                Write-SyncLog "No changes detected for repository $repoFullName - already in sync" -Level Success
-                $script:Summary.ReposAlreadyInSync++
-                return
-            }
+                foreach ($fileInfo in $filesToSync) {
+                    $targetPath = Join-Path $clonePath $fileInfo.RelativePath
+                    $targetDir = Split-Path $targetPath -Parent
+                    if (-not (Test-Path $targetDir)) {
+                        New-Item -Path $targetDir -ItemType Directory -Force | Out-Null
+                    }
+                    Copy-Item -Path $fileInfo.SourcePath -Destination $targetPath -Force
+                }
 
-            Write-SyncLog "Changes detected:" -Level Info
-            $status -split "`n" | ForEach-Object {
-                Write-SyncLog "  $_" -Level Info
-            }
+                # Detect changes
+                $status = git status --porcelain 2>&1
+                if ([string]::IsNullOrWhiteSpace($status)) {
+                    Write-Host '✅ Already in sync'
+                    $script:Summary.ReposAlreadyInSync++
+                    return
+                }
 
-            # Stage all changes
-            git add --all 2>&1 | Out-Null
+                $status -split "`n" | ForEach-Object { Write-Host "  $_" }
 
-            # Commit changes
-            git commit -m $CommitMessage 2>&1 | Out-Null
+                # Commit and push
+                git add --all 2>&1 | Out-Null
+                git commit -m $CommitMessage 2>&1 | Out-Null
+                $pushResult = git push --force --set-upstream origin $BranchName 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Git push failed: $pushResult"
+                }
 
-            # Push branch (force push to handle updates)
-            Write-SyncLog "Pushing branch to remote..." -Level Info
-            $pushResult = git push --force --set-upstream origin $BranchName 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "Git push failed: $pushResult"
-            }
-
-            Write-SyncLog "Branch pushed successfully" -Level Success
-
-            # Create or update pull request
-            try {
-                # Check if PR already exists
+                # Create or update PR
                 $existingPRs = (Invoke-GitHubAPI -Method GET -Endpoint "/repos/$owner/$repoName/pulls" -Body @{
-                    head  = "${owner}:${BranchName}"
-                    state = 'open'
-                } -Context $Context).Response
+                        head  = "${owner}:${BranchName}"
+                        state = 'open'
+                    } -Context $Context).Response
 
                 if ($existingPRs.Count -gt 0) {
-                    $prNumber = $existingPRs[0].number
-                    Write-SyncLog "Pull request #$prNumber already exists - it has been updated with the latest changes" -Level Success
+                    Write-Host "✅ Updated PR #$($existingPRs[0].number) - $($existingPRs[0].html_url)"
                     $script:Summary.PRsUpdated++
-                    $prUrl = $existingPRs[0].html_url
                 } else {
-                    # Create new PR
-                    $prParams = @{
-                        title = $PRTitle
-                        head  = $BranchName
-                        base  = $Repository.DefaultBranch
-                        body  = $PRBody
-                    }
+                    $pr = (Invoke-GitHubAPI -Method POST -Endpoint "/repos/$owner/$repoName/pulls" -Body @{
+                            title = $PRTitle
+                            head  = $BranchName
+                            base  = $Repository.DefaultBranch
+                            body  = $PRBody
+                        } -Context $Context).Response
 
-                    $pr = (Invoke-GitHubAPI -Method POST -Endpoint "/repos/$owner/$repoName/pulls" -Body $prParams -Context $Context).Response
-
-                    $prNumber = $pr.number
-                    $prUrl = $pr.html_url
-
-                    Write-SyncLog "Pull request #$prNumber created: $prUrl" -Level Success
-
-                    # Add label to PR
                     try {
-                        Invoke-GitHubAPI -Method POST -Endpoint "/repos/$owner/$repoName/issues/$prNumber/labels" -Body @{
+                        Invoke-GitHubAPI -Method POST -Endpoint "/repos/$owner/$repoName/issues/$($pr.number)/labels" -Body @{
                             labels = @($PRLabel)
                         } -Context $Context | Out-Null
-                        Write-SyncLog "Added label '$PRLabel' to PR #$prNumber" -Level Success
                     } catch {
-                        Write-SyncLog "Failed to add label to PR: $_" -Level Warning
+                        Write-Host "⚠️  Failed to add label: $_"
                     }
 
+                    Write-Host "✅ Created PR #$($pr.number) - $($pr.html_url)"
                     $script:Summary.PRsCreated++
                 }
 
-                Write-SyncLog "Repository $repoFullName processed successfully: $prUrl" -Level Success
-
-            } catch {
-                Write-SyncLog "Failed to create/update pull request for $repoFullName : $_" -Level Error
-                $script:Summary.Errors += "PR creation failed for $repoFullName : $_"
+            } finally {
+                Pop-Location
             }
 
+        } catch {
+            Write-Host "❌ $_"
+            $script:Summary.Errors += "$repoFullName : $_"
         } finally {
-            Pop-Location
-        }
-
-    } catch {
-        Write-SyncLog "Failed to sync repository $repoFullName : $_" -Level Error
-        $script:Summary.Errors += "Sync failed for $repoFullName : $_"
-    } finally {
-        # Cleanup
-        if (Test-Path $clonePath) {
-            Remove-Item -Path $clonePath -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path $clonePath) {
+                Remove-Item -Path $clonePath -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
@@ -405,35 +314,33 @@ function Sync-RepositoryFiles {
 #region Main Script
 
 try {
-    Write-SyncLog "=== Starting Managed Files Sync ===" -Level Info
+    LogGroup '🔑 Authenticate' {
+        $context = Connect-GitHubApp -PassThru
+    }
 
-    # Step 1: Create Installation Access Token contexts
-    Write-SyncLog "Creating Installation Access Token contexts..." -Level Info
-    $context = Connect-GitHubApp -PassThru
-    Write-SyncLog "IAT contexts created successfully" -Level Success
-
-    # Step 2: Discover file sets
-    $reposPath = Join-Path $PSScriptRoot '../Repos'
-    $reposPath = Resolve-Path $reposPath
-    Write-SyncLog "Discovering file sets from: $reposPath" -Level Info
-
-    $fileSets = Get-FileSets -ReposPath $reposPath
+    LogGroup '📂 Discover file sets' {
+        $reposPath = Join-Path $PSScriptRoot '../Repos'
+        $reposPath = Resolve-Path $reposPath
+        $fileSets = Get-FileSets -ReposPath $reposPath
+    }
 
     if ($fileSets.Count -eq 0) {
-        Write-SyncLog "No file sets found - exiting" -Level Warning
+        Write-Host '⚠️  No file sets found - nothing to do'
         exit 0
     }
 
-    # Step 3: Get subscribing repositories
-    $owner = 'PSModule'
-    $subscribingRepos = Get-SubscribingRepositories -Owner $owner -Context $context
+    LogGroup '🔍 Find subscribing repositories' {
+        $owner = 'PSModule'
+        $subscribingRepos = Get-SubscribingRepositories -Owner $owner -Context $context
+        Write-Host "Found $($subscribingRepos.Count) subscribing repositories"
+    }
 
     if ($subscribingRepos.Count -eq 0) {
-        Write-SyncLog "No subscribing repositories found - exiting" -Level Warning
+        Write-Host '⚠️  No subscribing repositories found - nothing to do'
         exit 0
     }
 
-    # Step 4: Sync files to each repository
+    # Sync files to each repository
     $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) "distributor-sync-$(Get-Random)"
     New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
 
@@ -441,11 +348,11 @@ try {
     $commitMessage = 'chore: sync managed files'
     $prTitle = '⚙️ [Maintenance]: Sync managed files'
     $prLabel = 'NoRelease'
-    $prBody = @"
+    $prBody = @'
 This pull request was automatically created by the [Distributor](https://github.com/PSModule/Distributor) workflow that keeps shared files in sync across the organization's repositories.
 
 The files in this PR are centrally managed. Any local changes to these files will be overwritten on the next sync. To propose changes, update the source files in the Distributor repo instead.
-"@
+'@
 
     try {
         foreach ($repo in $subscribingRepos) {
@@ -460,32 +367,30 @@ The files in this PR are centrally managed. Any local changes to these files wil
                 -Context $context
         }
     } finally {
-        # Cleanup temp directory
         if (Test-Path $tempPath) {
             Remove-Item -Path $tempPath -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    # Step 5: Output summary
-    Write-SyncLog "=== Sync Summary ===" -Level Info
-    Write-SyncLog "Total repositories processed: $($script:Summary.TotalReposProcessed)" -Level Info
-    Write-SyncLog "Pull requests created: $($script:Summary.PRsCreated)" -Level Success
-    Write-SyncLog "Pull requests updated: $($script:Summary.PRsUpdated)" -Level Success
-    Write-SyncLog "Repositories already in sync: $($script:Summary.ReposAlreadyInSync)" -Level Success
-    Write-SyncLog "Repositories skipped: $($script:Summary.ReposSkipped)" -Level Warning
+    # Summary
+    Write-Host ''
+    Write-Host '📊 Summary'
+    Write-Host "   Processed: $($script:Summary.TotalReposProcessed)"
+    Write-Host "   Created:   $($script:Summary.PRsCreated)"
+    Write-Host "   Updated:   $($script:Summary.PRsUpdated)"
+    Write-Host "   In sync:   $($script:Summary.ReposAlreadyInSync)"
+    Write-Host "   Skipped:   $($script:Summary.ReposSkipped)"
 
     if ($script:Summary.Errors.Count -gt 0) {
-        Write-SyncLog "Errors encountered: $($script:Summary.Errors.Count)" -Level Error
-        foreach ($error in $script:Summary.Errors) {
-            Write-SyncLog "  - $error" -Level Error
+        Write-Host "   Errors:    $($script:Summary.Errors.Count)"
+        foreach ($err in $script:Summary.Errors) {
+            Write-Host "     ❌ $err"
         }
     }
 
-    Write-SyncLog "=== Sync Complete ===" -Level Success
-
 } catch {
-    Write-SyncLog "Fatal error during sync: $_" -Level Error
-    Write-SyncLog $_.ScriptStackTrace -Level Error
+    Write-Host "❌ Fatal: $_"
+    Write-Host $_.ScriptStackTrace
     exit 1
 }
 
