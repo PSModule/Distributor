@@ -125,13 +125,16 @@ function Get-SubscribingRepositories {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [string]$Owner
+        [string]$Owner,
+
+        [Parameter(Mandatory)]
+        [object]$Context
     )
 
     Write-SyncLog "Querying repositories in organization: $Owner" -Level Info
 
     try {
-        $repos = Get-GitHubRepository -Owner $Owner
+        $repos = Get-GitHubRepository -Owner $Owner -Context $Context
         Write-SyncLog "Found $($repos.Count) repositories in organization" -Level Info
 
         $subscribingRepos = @()
@@ -143,11 +146,11 @@ function Get-SubscribingRepositories {
                 continue
             }
 
-            $type = $customProps.Type
-            $subscribeTo = $customProps.SubscribeTo
+            $type = ($customProps | Where-Object Name -EQ 'Type').Value
+            $subscribeTo = ($customProps | Where-Object Name -EQ 'SubscribeTo').Value
 
             # Both Type and SubscribeTo must be set
-            if ([string]::IsNullOrWhiteSpace($type) -or $null -eq $subscribeTo) {
+            if ([string]::IsNullOrWhiteSpace($type) -or -not $subscribeTo) {
                 continue
             }
 
@@ -210,7 +213,10 @@ function Sync-RepositoryFiles {
         [string]$PRBody,
 
         [Parameter(Mandatory)]
-        [string]$PRLabel
+        [string]$PRLabel,
+
+        [Parameter(Mandatory)]
+        [object]$Context
     )
 
     $repoFullName = $Repository.FullName
@@ -265,11 +271,11 @@ function Sync-RepositoryFiles {
             throw "Git clone failed: $gitCloneResult"
         }
 
-        # Configure git identity
+        # Configure git identity and authentication
         Push-Location $clonePath
         try {
-            git config user.name 'PSModule Bot' 2>&1 | Out-Null
-            git config user.email 'bot@psmodule.io' 2>&1 | Out-Null
+            Set-GitHubGitConfig -Context $Context
+            Write-SyncLog "Git credentials configured for $repoFullName" -Level Info
 
             # Check if branch already exists
             $branchExists = $false
@@ -333,10 +339,10 @@ function Sync-RepositoryFiles {
             # Create or update pull request
             try {
                 # Check if PR already exists
-                $existingPRs = Invoke-GitHubAPI -Method GET -Endpoint "/repos/$owner/$repoName/pulls" -Body @{
+                $existingPRs = (Invoke-GitHubAPI -Method GET -Endpoint "/repos/$owner/$repoName/pulls" -Body @{
                     head  = "${owner}:${BranchName}"
                     state = 'open'
-                }
+                } -Context $Context).Response
 
                 if ($existingPRs.Count -gt 0) {
                     $prNumber = $existingPRs[0].number
@@ -352,7 +358,7 @@ function Sync-RepositoryFiles {
                         body  = $PRBody
                     }
 
-                    $pr = Invoke-GitHubAPI -Method POST -Endpoint "/repos/$owner/$repoName/pulls" -Body $prParams
+                    $pr = (Invoke-GitHubAPI -Method POST -Endpoint "/repos/$owner/$repoName/pulls" -Body $prParams -Context $Context).Response
 
                     $prNumber = $pr.number
                     $prUrl = $pr.html_url
@@ -363,7 +369,7 @@ function Sync-RepositoryFiles {
                     try {
                         Invoke-GitHubAPI -Method POST -Endpoint "/repos/$owner/$repoName/issues/$prNumber/labels" -Body @{
                             labels = @($PRLabel)
-                        } | Out-Null
+                        } -Context $Context | Out-Null
                         Write-SyncLog "Added label '$PRLabel' to PR #$prNumber" -Level Success
                     } catch {
                         Write-SyncLog "Failed to add label to PR: $_" -Level Warning
@@ -403,7 +409,7 @@ try {
 
     # Step 1: Create Installation Access Token contexts
     Write-SyncLog "Creating Installation Access Token contexts..." -Level Info
-    Connect-GitHubApp
+    $context = Connect-GitHubApp -PassThru
     Write-SyncLog "IAT contexts created successfully" -Level Success
 
     # Step 2: Discover file sets
@@ -420,7 +426,7 @@ try {
 
     # Step 3: Get subscribing repositories
     $owner = 'PSModule'
-    $subscribingRepos = Get-SubscribingRepositories -Owner $owner
+    $subscribingRepos = Get-SubscribingRepositories -Owner $owner -Context $context
 
     if ($subscribingRepos.Count -eq 0) {
         Write-SyncLog "No subscribing repositories found - exiting" -Level Warning
@@ -450,7 +456,8 @@ The files in this PR are centrally managed. Any local changes to these files wil
                 -CommitMessage $commitMessage `
                 -PRTitle $prTitle `
                 -PRBody $prBody `
-                -PRLabel $prLabel
+                -PRLabel $prLabel `
+                -Context $context
         }
     } finally {
         # Cleanup temp directory
